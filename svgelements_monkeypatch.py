@@ -203,3 +203,58 @@ def arc_derivative(self, t, n=1):
 
 
 Arc.derivative = arc_derivative
+
+
+def segment_curvature(self, t, use_inf=False):
+    """returns the curvature of the segment at t.
+    Notes
+    -----
+    If you receive a RuntimeWarning, run command
+    >>> old = numpy.seterr(invalid='raise')
+    This can be undone with
+    >>> numpy.seterr(**old)
+    """
+
+    dz = self.derivative(t)
+    ddz = self.derivative(t, n=2)
+    dx, dy = dz.real, dz.imag
+    ddx, ddy = ddz.real, ddz.imag
+    old_np_seterr = numpy.seterr(invalid='raise')
+    try:
+        #kappa = abs(dx*ddy - dy*ddx)/sqrt(dx*dx + dy*dy)**3
+        kappa = (dx*ddy - dy*ddx)/sqrt(dx*dx + dy*dy)**3
+    except (ZeroDivisionError, FloatingPointError):
+        # tangent vector is zero at t, use polytools to find limit
+        p = self.poly()
+        dp = p.deriv()
+        ddp = dp.deriv()
+        dx, dy = real(dp), imag(dp)
+        ddx, ddy = real(ddp), imag(ddp)
+        f2 = (dx*ddy - dy*ddx)**2
+        g2 = (dx*dx + dy*dy)**3
+        lim2 = rational_limit(f2, g2, t)
+        if lim2 < 0:  # impossible, must be numerical error
+            return 0
+        kappa = sqrt(lim2)
+    finally:
+        numpy.seterr(**old_np_seterr)
+    return kappa
+
+def line_curvature(self, t):
+    """returns the curvature of the line, which is always zero."""
+    return 0
+
+Line.curvature = line_curvature
+
+def cubic_curvature(self, t):
+    """returns the curvature of the segment at t."""
+    return segment_curvature(self, t)
+
+QuadraticBezier.curvature = cubic_curvature
+CubicBezier.curvature = cubic_curvature
+
+def arc_curvature(self, t):
+    """returns the curvature of the segment at t."""
+    return segment_curvature(self, t)
+
+Arc.curvature = arc_curvature

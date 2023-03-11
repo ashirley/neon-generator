@@ -1,4 +1,5 @@
 from svgelements_monkeypatch import *
+import svgwrite
 import numpy
 from stl import Mesh
 
@@ -6,20 +7,29 @@ from stl import Mesh
 # file = "examples/freehand.svg"
 # file = "examples/freehand-simpler.svg"
 # file = "examples/curves.svg"
-# file = "examples/tree.svg"
+file = "examples/tree.svg"
 # file = "examples/2lines.svg"
-file = "examples/2paths.svg"
+# file = "examples/2paths.svg"
 neon_length = "500cm"
 res = 50  # How many steps we split a curve into. Higher the better quality but bigger STL
+output_stl_file = "output.stl"
+output_debug_svg_file = "output.svg"
+log_paths=False
+log_quads=False
 
+debug_perpendicular_style = {"stroke":"green", "stroke_width":"1px"}
+debug_original_style = {"stroke":"black", "stroke_width":"3px", "fill":"none"}
+debug_comb_style = {"stroke":"blue", "stroke_width":"1px"}
 
 def main():
     paths = parse_and_validate_stl()
+    scale = 1
 
-    total_length = sum(path.length() for path in paths)
-    scale = Length(neon_length).value(ppi=DEFAULT_PPI) / total_length
+    if neon_length:
+        total_length = sum(path.length() for path in paths)
+        scale = Length(neon_length).value(ppi=DEFAULT_PPI) / total_length
 
-    print("scale: %s" % scale)
+        print("scaling by '%s' to match target length of '%s'" % (scale, neon_length))
 
     # TODO: check for sharp angles
     # TODO: check for overlapping
@@ -28,33 +38,60 @@ def main():
 
     quads_list = generate_perpendicular_quads(paths, scale)
 
-    # for quads in quads_list:
-    #     for quad in quads:
-    #         print(quad)
+    if output_stl_file:
+        # Each quad is 8 vertices (2 z positions for each 4 2d points)
+        # between each set of 8 vertices is 8 square faces = 16 triangles)
+        # At the end is 6 triangles for the 1 face.
 
-    # Each quad is 8 vertices (2 z positions for each 4 2d points)
-    # between each set of 8 vertices is 8 square faces = 16 triangles)
-    # At the end is 6 triangles for the 1 face.
+        num_triangles = 0
+        for quads in quads_list:
+            num_triangles += (len(quads) - 1) * 16 + 12
 
-    num_triangles = 0
-    for quads in quads_list:
-        num_triangles += (len(quads) - 1) * 16 + 12
+        # Build the stl triangles.
+        stl_data = numpy.zeros(num_triangles, dtype=Mesh.dtype)
+        stl_data_cursor = 0
 
-    # Build the stl triangles.
-    stl_data = numpy.zeros(num_triangles, dtype=Mesh.dtype)
-    stl_data_cursor = 0
+        for quads in quads_list:
+            num_triangles_in_quads = (len(quads) - 1) * 16 + 12
+            output_array = stl_data['vectors'][stl_data_cursor:stl_data_cursor+num_triangles_in_quads]
+            stl_data_cursor += num_triangles_in_quads
 
-    for quads in quads_list:
-        num_triangles_in_quads = (len(quads) - 1) * 16 + 12
-        output_array = stl_data['vectors'][stl_data_cursor:stl_data_cursor+num_triangles_in_quads]
-        stl_data_cursor += num_triangles_in_quads
+            create_stl_triangles(output_array, quads)
 
-        create_stl_triangles(output_array, quads)
+        print("Saving %d triangles in %d sections..." % (len(stl_data), len(quads_list)))
+        stl_mesh = Mesh(stl_data)
+        stl_mesh.save(output_stl_file)
 
-    print("Saving %d triangles in %d sections..." % (len(stl_data), len(quads_list)))
-    stl_mesh = Mesh(stl_data)
-    stl_mesh.save("output.stl")
+    if output_debug_svg_file:
+        dwg = svgwrite.Drawing(output_debug_svg_file, profile='tiny')
 
+        # copy across the original lines
+        copy_paths_to_debug_svg(paths, dwg, scale)
+
+        # add the perpendicular lines
+        prev_quad = None
+        g = dwg.g(**debug_perpendicular_style)
+        for quads in quads_list:
+            for quad in quads:
+                g.add(dwg.line(start=(quad[0][0], quad[0][1]), end=(quad[3][0], quad[3][1])))
+                if prev_quad:
+                    g.add(dwg.line(start=(prev_quad[0][0], prev_quad[0][1]), end=(quad[0][0], quad[0][1])))
+                    g.add(dwg.line(start=(prev_quad[3][0], prev_quad[3][1]), end=(quad[3][0], quad[3][1])))
+                prev_quad = quad
+            prev_quad = None
+        dwg.add(g)
+
+        # add a curvature comb
+        add_curvature_comb_to_debug_svg(paths, dwg, scale)
+
+        dwg.save()
+
+    if log_quads:
+        for quads in quads_list:
+            for quad in quads:
+                print(quad)
+            print()
+            print()
 
 def parse_and_validate_stl():
     svg = SVG.parse(file)
@@ -96,16 +133,19 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
 
             if isinstance(curr_segment, Move):
                 # A move doesn't need neon or a support
-                print("Move: %s" % curr_segment)
+                if log_paths:
+                    print("Move: %s" % curr_segment)
                 if len(quads[quad_num]) > 0:
                     # There is content in the current list, start a new one.
                     quad_num += 1
                     quads.append([])
             elif isinstance(curr_segment, Close):
                 # TODO
-                print("Close: %s" % curr_segment)
+                if log_paths:
+                    print("Close: %s" % curr_segment)
             elif isinstance(curr_segment, Line):
-                print("Line: %s" % curr_segment)
+                if log_paths:
+                    print("Line: %s" % curr_segment)
                 # Straight lines only need 2 quad-2d points along the normal at the start and end
                 # (although we only put the end in if the next segment won't duplicate it).
                 curr_join = join_angle(next_segment, curr_segment.normal())
@@ -121,7 +161,8 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
                     quads[quad_num].append(quad_point(curr_segment.start, prev_join, curr_segment.normal()))
 
             elif isinstance(curr_segment, Arc):
-                print("Arc: %s" % curr_segment)
+                if log_paths:
+                    print("Arc: %s" % curr_segment)
                 curr_join = join_angle(next_segment, curr_segment.normal(0.99))
 
                 quads[quad_num].append(quad_point(curr_segment.point(0), prev_join, curr_segment.normal(0)))
@@ -133,7 +174,8 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
                     quads[quad_num].append(quad_point(curr_segment.point(0.99), curr_join, curr_segment.normal(0.99)))
 
             elif isinstance(curr_segment, QuadraticBezier):
-                print("QuadraticBezier: %s" % curr_segment)
+                if log_paths:
+                    print("QuadraticBezier: %s" % curr_segment)
                 curr_join = join_angle(next_segment, curr_segment.normal(0.99))
 
                 quads[quad_num].append(quad_point(curr_segment.point(0), prev_join, curr_segment.normal(0)))
@@ -145,7 +187,8 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
                     quads[quad_num].append(quad_point(curr_segment.point(0.99), curr_join, curr_segment.normal(0.99)))
 
             elif isinstance(curr_segment, CubicBezier):
-                print("CubicBezier: %s" % curr_segment)
+                if log_paths:
+                    print("CubicBezier: %s" % curr_segment)
                 curr_join = join_angle(next_segment, curr_segment.normal(0.99))
 
                 quads[quad_num].append(quad_point(curr_segment.point(0), prev_join, curr_segment.normal(0)))
@@ -158,6 +201,98 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
 
             prev_join = curr_join
     return quads
+
+def copy_paths_to_debug_svg(paths, dwg, scale):
+    """
+    Copy the paths (as we understand them) out of the source SVG into the debug svg
+    """
+    minX = float('inf')
+    minY = float('inf')
+    maxX = 0
+    maxY = 0
+
+    for path in paths:
+        debug_path = svgwrite.path.Path(**debug_original_style)
+        for i in range(len(path)):
+            curr_segment = path[i] * ("scale(%d)" % scale)  # current segment
+            debug_path.push(curr_segment.d())
+
+        bbox = (path * ("scale(%d)" % scale)).bbox()
+        minX = min(minX, bbox[0])
+        minY = min(minY, bbox[1])
+        maxX = max(maxX, bbox[2])
+        maxY = max(maxY, bbox[3])
+
+        dwg.add(debug_path)
+
+    # add a 5% padding
+    xPadding = (maxX - minX) * 0.05
+    yPadding = (maxY - minY) * 0.05
+    minX = minX - xPadding
+    maxX = maxX + xPadding
+    minY = minY - yPadding
+    maxY = maxY + yPadding
+
+    dwg['viewBox'] = "%d %d %d %d" % (minX, minY, maxX - minX, maxY - minY)
+
+def add_curvature_comb_to_debug_svg(paths, dwg, scale):
+    """
+draw a curvature comb and add it to the debug svg
+    """
+    g = dwg.g(**debug_comb_style)
+    for path in paths:
+        for i in range(len(path)):
+            curr_segment = path[i] * ("scale(%d)" % scale)  # current segment
+
+            if isinstance(curr_segment, Move):
+                # A move doesn't need neon or a support so doesn't need a comb either
+                pass
+            elif isinstance(curr_segment, Close):
+                # TODO
+                pass
+            elif isinstance(curr_segment, Line):
+                # Straight lines don't need a comb
+                pass
+            elif isinstance(curr_segment, Arc):
+                prev_end_point = None
+                for j in range(0, res):
+                    point = curr_segment.point(j / res)
+                    curvature = curr_segment.curvature(j / res)
+                    normal = curr_segment.normal(j / res)
+                    end_point = point + normal * curvature * 1000
+
+                    g.add(dwg.line(start=point, end=end_point))
+                    if prev_end_point:
+                        g.add(dwg.line(start=prev_end_point, end=end_point))
+                    prev_end_point = end_point
+
+            elif isinstance(curr_segment, QuadraticBezier):
+                prev_end_point = None
+                for j in range(0, res):
+                    point = curr_segment.point(j / res)
+                    curvature = curr_segment.curvature(j / res)
+                    normal = curr_segment.normal(j / res)
+                    end_point = point + normal * curvature * 1000
+
+                    g.add(dwg.line(start=point, end=end_point))
+                    if prev_end_point:
+                        g.add(dwg.line(start=prev_end_point, end=end_point))
+                    prev_end_point = end_point
+
+            elif isinstance(curr_segment, CubicBezier):
+                prev_end_point = None
+                for j in range(0, res):
+                    point = curr_segment.point(j / res)
+                    curvature = curr_segment.curvature(j / res)
+                    normal = curr_segment.normal(j / res)
+                    end_point = point + normal * curvature * 1000
+
+                    g.add(dwg.line(start=point, end=end_point))
+                    if prev_end_point:
+                        g.add(dwg.line(start=prev_end_point, end=end_point))
+                    prev_end_point = end_point
+    dwg.add(g)
+
 
 
 channel_width = 10
