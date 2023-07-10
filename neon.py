@@ -11,8 +11,8 @@ from stl import Mesh
 file = "examples/toilet.svg"
 # file = "examples/2lines.svg"
 # file = "examples/2paths.svg"
-neon_length = "660mm" #"500cm"
-res = 500  # How many steps we split a curve into. Higher the better quality but bigger STL
+neon_length = "260mm" #"500cm"
+res = 1500  # How many steps we split a curve into. Higher the better quality but bigger STL
 output_stl_file = "output.stl"
 output_debug_svg_file = "output.svg"
 log_paths=False
@@ -133,8 +133,8 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
 
         prev_join = None  # angle between previous segment and curr
         for i in range(len(path)):
-            curr_segment = path[i] * ("scale(%d)" % scale)  # current segment
-            next_segment = path[i + 1] * ("scale(%d)" % scale) if i + 1 < len(path) else None  # next segment, if any
+            curr_segment = path[i] * ("scale(%f)" % scale)  # current segment
+            next_segment = path[i + 1] * ("scale(%f)" % scale) if i + 1 < len(path) else None  # next segment, if any
             curr_join = None  # angle between the current segment and the next
 
             if isinstance(curr_segment, Move):
@@ -223,10 +223,10 @@ def copy_paths_to_debug_svg(paths, dwg, scale):
     for path in paths:
         debug_path = svgwrite.path.Path(**debug_original_style)
         for i in range(len(path)):
-            curr_segment = path[i] * ("scale(%d)" % scale)  # current segment
+            curr_segment = path[i] * ("scale(%f)" % scale)  # current segment
             debug_path.push(curr_segment.d())
 
-        bbox = (path * ("scale(%d)" % scale)).bbox()
+        bbox = (path * ("scale(%f)" % scale)).bbox()
         minX = min(minX, bbox[0])
         minY = min(minY, bbox[1])
         maxX = max(maxX, bbox[2])
@@ -252,7 +252,7 @@ draw a curvature comb and add it to the debug svg
     g = dwg.g(**debug_comb_style)
     for path in paths:
         for i in range(len(path)):
-            curr_segment = path[i] * ("scale(%d)" % scale)  # current segment
+            curr_segment = path[i] * ("scale(%f)" % scale)  # current segment
 
             if isinstance(curr_segment, Move):
                 # A move doesn't need neon or a support so doesn't need a comb either
