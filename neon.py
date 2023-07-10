@@ -11,7 +11,7 @@ file = "examples/tree.svg"
 # file = "examples/2lines.svg"
 # file = "examples/2paths.svg"
 neon_length = "500cm"
-res = 50  # How many steps we split a curve into. Higher the better quality but bigger STL
+res = 500  # How many steps we split a curve into. Higher the better quality but bigger STL
 output_stl_file = "output.stl"
 output_debug_svg_file = "output.svg"
 log_paths=False
@@ -32,7 +32,7 @@ def main():
         print("scaling by '%s' to match target length of '%s'" % (scale, neon_length))
 
     # TODO: check for sharp angles
-    # TODO: check for overlapping
+    # TODO: check for overlapping / fix almost joining paths
     # TODO: adjust more than just the last line to meet the next segment.
     #  Especially if it is a short segment, resolution is high or there is a large difference in angle needed.
 
@@ -93,6 +93,9 @@ def main():
             print()
             print()
 
+def steps_for_segment(curr_segment, scaled_total_length):
+    return max(2, ceil((curr_segment.length() / scaled_total_length) * res))
+
 def parse_and_validate_stl():
     svg = SVG.parse(file)
     paths = list(svg.select(lambda e: isinstance(e, Path)))
@@ -121,6 +124,8 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
     2 non-contiguous straight lines, we will return a list of 2 lists, each inner list will have 2 tuples with 4 points
     (one for the start of the line and one for the end)
     """
+    scaled_total_length = sum(path.length() for path in paths)
+
     quads = [[]]
     quad_num = 0;
     for path in paths:
@@ -166,8 +171,9 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
                 curr_join = join_angle(next_segment, curr_segment.normal(0.99))
 
                 quads[quad_num].append(quad_point(curr_segment.point(0), prev_join, curr_segment.normal(0)))
-                for j in range(1, res):
-                    quads[quad_num].append(quad_point(curr_segment.point(j / res), None, curr_segment.normal(j / res)))
+                steps = steps_for_segment(curr_segment, scaled_total_length)
+                for j in range(1, steps):
+                    quads[quad_num].append(quad_point(curr_segment.point(j / steps), None, curr_segment.normal(j / steps)))
 
                 if curr_join is None:
                     # not joining the next segment, add an end along the normal of the curve
@@ -179,8 +185,9 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
                 curr_join = join_angle(next_segment, curr_segment.normal(0.99))
 
                 quads[quad_num].append(quad_point(curr_segment.point(0), prev_join, curr_segment.normal(0)))
-                for j in range(1, res):
-                    quads[quad_num].append(quad_point(curr_segment.point(j / res), None, curr_segment.normal(j / res)))
+                steps = steps_for_segment(curr_segment, scaled_total_length)
+                for j in range(1, steps):
+                    quads[quad_num].append(quad_point(curr_segment.point(j / steps), None, curr_segment.normal(j / steps)))
 
                 if curr_join is None:
                     # not joining the next segment, add an end along the normal of the curve
@@ -192,8 +199,9 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
                 curr_join = join_angle(next_segment, curr_segment.normal(0.99))
 
                 quads[quad_num].append(quad_point(curr_segment.point(0), prev_join, curr_segment.normal(0)))
-                for j in range(1, res):
-                    quads[quad_num].append(quad_point(curr_segment.point(j / res), None, curr_segment.normal(j / res)))
+                steps = steps_for_segment(curr_segment, scaled_total_length)
+                for j in range(1, steps):
+                    quads[quad_num].append(quad_point(curr_segment.point(j / steps), None, curr_segment.normal(j / steps)))
 
                 if curr_join is None:
                     # not joining the next segment, add an end along the normal of the curve
@@ -239,6 +247,7 @@ def add_curvature_comb_to_debug_svg(paths, dwg, scale):
     """
 draw a curvature comb and add it to the debug svg
     """
+    scaled_total_length = sum(path.length() for path in paths)
     g = dwg.g(**debug_comb_style)
     for path in paths:
         for i in range(len(path)):
@@ -255,10 +264,11 @@ draw a curvature comb and add it to the debug svg
                 pass
             elif isinstance(curr_segment, Arc):
                 prev_end_point = None
-                for j in range(0, res):
-                    point = curr_segment.point(j / res)
-                    curvature = curr_segment.curvature(j / res)
-                    normal = curr_segment.normal(j / res)
+                steps = steps_for_segment(curr_segment, scaled_total_length)
+                for j in range(0, steps + 1):
+                    point = curr_segment.point(j / steps)
+                    curvature = curr_segment.curvature(j / steps)
+                    normal = curr_segment.normal(j / steps)
                     end_point = point + normal * curvature * 1000
 
                     g.add(dwg.line(start=point, end=end_point))
@@ -268,10 +278,11 @@ draw a curvature comb and add it to the debug svg
 
             elif isinstance(curr_segment, QuadraticBezier):
                 prev_end_point = None
-                for j in range(0, res):
-                    point = curr_segment.point(j / res)
-                    curvature = curr_segment.curvature(j / res)
-                    normal = curr_segment.normal(j / res)
+                steps = steps_for_segment(curr_segment, scaled_total_length)
+                for j in range(0, steps + 1):
+                    point = curr_segment.point(j / steps)
+                    curvature = curr_segment.curvature(j / steps)
+                    normal = curr_segment.normal(j / steps)
                     end_point = point + normal * curvature * 1000
 
                     g.add(dwg.line(start=point, end=end_point))
@@ -281,10 +292,11 @@ draw a curvature comb and add it to the debug svg
 
             elif isinstance(curr_segment, CubicBezier):
                 prev_end_point = None
-                for j in range(0, res):
-                    point = curr_segment.point(j / res)
-                    curvature = curr_segment.curvature(j / res)
-                    normal = curr_segment.normal(j / res)
+                steps = steps_for_segment(curr_segment, scaled_total_length)
+                for j in range(0, steps + 1):
+                    point = curr_segment.point(j / steps)
+                    curvature = curr_segment.curvature(j / steps)
+                    normal = curr_segment.normal(j / steps)
                     end_point = point + normal * curvature * 1000
 
                     g.add(dwg.line(start=point, end=end_point))
