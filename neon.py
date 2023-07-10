@@ -7,10 +7,11 @@ from stl import Mesh
 # file = "examples/freehand.svg"
 # file = "examples/freehand-simpler.svg"
 # file = "examples/curves.svg"
-file = "examples/tree.svg"
+# file = "examples/tree.svg"
+file = "examples/toilet.svg"
 # file = "examples/2lines.svg"
 # file = "examples/2paths.svg"
-neon_length = "500cm"
+neon_length = "660mm" #"500cm"
 res = 500  # How many steps we split a curve into. Higher the better quality but bigger STL
 output_stl_file = "output.stl"
 output_debug_svg_file = "output.svg"
@@ -307,9 +308,15 @@ draw a curvature comb and add it to the debug svg
 
 
 
-channel_width = 10
-channel_depth = 15
-wall_width = 2
+# side emitting strip
+#channel_width = 10
+#channel_depth = 15
+#wall_width = 2
+
+#noodles / filament
+channel_width = 2
+channel_depth = 2
+wall_width = 1
 
 
 # generate 4 points along the join line, centered on the given point with the given normal.
