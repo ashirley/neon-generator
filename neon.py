@@ -8,11 +8,11 @@ from stl import Mesh
 # file = "examples/freehand-simpler.svg"
 # file = "examples/curves.svg"
 # file = "examples/tree.svg"
-file = "examples/toilet.svg"
+file = "examples/toilet-small.svg"
 # file = "examples/2lines.svg"
 # file = "examples/2paths.svg"
-neon_length = "260mm" #"500cm"
-res = 1500  # How many steps we split a curve into. Higher the better quality but bigger STL
+neon_length = "240mm" #"500cm"
+res = 500  # How many steps we split a curve into. Higher the better quality but bigger STL
 output_stl_file = "output.stl"
 output_debug_svg_file = "output.svg"
 log_paths=False
@@ -30,14 +30,18 @@ def main():
         total_length = sum(path.length() for path in paths)
         scale = Length(neon_length).value(ppi=DEFAULT_PPI) / total_length
 
-        print("scaling by '%s' to match target length of '%s'" % (scale, neon_length))
+        print("scaling '%f' by '%s' to match target length of '%s'" % (total_length, scale, neon_length))
+
+    scaled_paths = [Path((path * ("scale(%f)" % scale)).segments()) for path in paths]
+    mm_paths = [Path((path * ("scale(%f)" % (Length("1").to_mm()))).segments()) for path in scaled_paths]
+    print("output path will have a length of %f mm" % sum(path.length() for path in mm_paths))
 
     # TODO: check for sharp angles
     # TODO: check for overlapping / fix almost joining paths
     # TODO: adjust more than just the last line to meet the next segment.
     #  Especially if it is a short segment, resolution is high or there is a large difference in angle needed.
 
-    quads_list = generate_perpendicular_quads(paths, scale)
+    quads_list = generate_perpendicular_quads(mm_paths)
 
     if output_stl_file:
         # Each quad is 8 vertices (2 z positions for each 4 2d points)
@@ -67,7 +71,7 @@ def main():
         dwg = svgwrite.Drawing(output_debug_svg_file, profile='tiny')
 
         # copy across the original lines
-        copy_paths_to_debug_svg(paths, dwg, scale)
+        copy_paths_to_debug_svg(scaled_paths, dwg)
 
         # add the perpendicular lines
         prev_quad = None
@@ -83,7 +87,7 @@ def main():
         dwg.add(g)
 
         # add a curvature comb
-        add_curvature_comb_to_debug_svg(paths, dwg, scale)
+        add_curvature_comb_to_debug_svg(scaled_paths, dwg)
 
         dwg.save()
 
@@ -110,7 +114,7 @@ def parse_and_validate_stl():
     return paths
 
 
-def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, Point, Point]]]:
+def generate_perpendicular_quads(paths) -> list[list[tuple[Point, Point, Point, Point]]]:
     """
     Walk the path, generating a list of 4 2d coordinates on a line perpendicular to the line of the path.
     The 4 points are for:
@@ -133,8 +137,8 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
 
         prev_join = None  # angle between previous segment and curr
         for i in range(len(path)):
-            curr_segment = path[i] * ("scale(%f)" % scale)  # current segment
-            next_segment = path[i + 1] * ("scale(%f)" % scale) if i + 1 < len(path) else None  # next segment, if any
+            curr_segment = path[i] # current segment
+            next_segment = path[i + 1] if i + 1 < len(path) else None  # next segment, if any
             curr_join = None  # angle between the current segment and the next
 
             if isinstance(curr_segment, Move):
@@ -211,7 +215,7 @@ def generate_perpendicular_quads(paths, scale) -> list[list[tuple[Point, Point, 
             prev_join = curr_join
     return quads
 
-def copy_paths_to_debug_svg(paths, dwg, scale):
+def copy_paths_to_debug_svg(paths, dwg):
     """
     Copy the paths (as we understand them) out of the source SVG into the debug svg
     """
@@ -223,10 +227,10 @@ def copy_paths_to_debug_svg(paths, dwg, scale):
     for path in paths:
         debug_path = svgwrite.path.Path(**debug_original_style)
         for i in range(len(path)):
-            curr_segment = path[i] * ("scale(%f)" % scale)  # current segment
+            curr_segment = path[i]  # current segment
             debug_path.push(curr_segment.d())
 
-        bbox = (path * ("scale(%f)" % scale)).bbox()
+        bbox = path.bbox()
         minX = min(minX, bbox[0])
         minY = min(minY, bbox[1])
         maxX = max(maxX, bbox[2])
@@ -244,7 +248,7 @@ def copy_paths_to_debug_svg(paths, dwg, scale):
 
     dwg['viewBox'] = "%d %d %d %d" % (minX, minY, maxX - minX, maxY - minY)
 
-def add_curvature_comb_to_debug_svg(paths, dwg, scale):
+def add_curvature_comb_to_debug_svg(paths, dwg):
     """
 draw a curvature comb and add it to the debug svg
     """
@@ -252,7 +256,7 @@ draw a curvature comb and add it to the debug svg
     g = dwg.g(**debug_comb_style)
     for path in paths:
         for i in range(len(path)):
-            curr_segment = path[i] * ("scale(%f)" % scale)  # current segment
+            curr_segment = path[i]  # current segment
 
             if isinstance(curr_segment, Move):
                 # A move doesn't need neon or a support so doesn't need a comb either
