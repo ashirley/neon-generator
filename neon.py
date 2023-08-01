@@ -5,14 +5,14 @@ from stl import Mesh
 import argparse
 from collections import namedtuple
 
-debug=False
+debug = False
 
-log_paths=False
-log_perp_points=False
+log_paths = False
+log_perp_points = False
 
-debug_perpendicular_style = {"stroke":"green", "stroke_width":"1px"}
-debug_original_style = {"stroke":"black", "stroke_width":"3px", "fill":"none"}
-debug_comb_style = {"stroke":"blue", "stroke_width":"1px"}
+debug_perpendicular_style = {"stroke": "green", "stroke_width": "1px"}
+debug_original_style = {"stroke": "black", "stroke_width": "3px", "fill": "none"}
+debug_comb_style = {"stroke": "blue", "stroke_width": "1px"}
 
 
 def main():
@@ -106,8 +106,10 @@ def main():
             print()
             print()
 
+
 def steps_for_segment(curr_segment, scaled_total_length, resolution):
     return max(2, ceil((curr_segment.length() / scaled_total_length) * resolution))
+
 
 def parse_and_validate_stl(file, covered_colour):
     svg = SVG.parse(file)
@@ -116,13 +118,13 @@ def parse_and_validate_stl(file, covered_colour):
     if len(paths) == 0:
         print("ERROR: no paths in input SVG")
         raise Exception
-    if covered_colour == None:
+    if covered_colour is None:
         if len(stroke_colors) != 1:
             raise Exception("ERROR: multiple color paths in input SVG and no cover color specified")
     else:
         if len(stroke_colors) > 2:
             raise Exception("ERROR: more than 2 color paths in input SVG: %s" % stroke_colors)
-        if not covered_colour in stroke_colors:
+        if covered_colour not in stroke_colors:
             raise Exception("ERROR: covered color specified (%s) not present in the input SVG which has (%s)" % (covered_colour, stroke_colors))
 
     return paths
@@ -158,7 +160,7 @@ def generate_perpendicular_points(paths, resolution, profile, covered_colour) \
         covered = path.stroke.hex == covered_colour
         prev_join = None  # angle between previous segment and curr
         for i in range(len(path)):
-            curr_segment = path[i] # current segment
+            curr_segment = path[i]  # current segment
             next_segment = path[i + 1] if i + 1 < len(path) else None  # next segment, if any
             curr_join = None  # angle between the current segment and the next
 
@@ -236,14 +238,15 @@ def generate_perpendicular_points(paths, resolution, profile, covered_colour) \
             prev_join = curr_join
     return perp_points_lists
 
+
 def copy_paths_to_debug_svg(paths, dwg):
     """
     Copy the paths (as we understand them) out of the source SVG into the debug svg
     """
-    minX = float('inf')
-    minY = float('inf')
-    maxX = 0
-    maxY = 0
+    min_x = float('inf')
+    min_y = float('inf')
+    max_x = 0
+    max_y = 0
 
     for path in paths:
         debug_path = svgwrite.path.Path(**debug_original_style)
@@ -252,22 +255,23 @@ def copy_paths_to_debug_svg(paths, dwg):
             debug_path.push(curr_segment.d())
 
         bbox = path.bbox()
-        minX = min(minX, bbox[0])
-        minY = min(minY, bbox[1])
-        maxX = max(maxX, bbox[2])
-        maxY = max(maxY, bbox[3])
+        min_x = min(min_x, bbox[0])
+        min_y = min(min_y, bbox[1])
+        max_x = max(max_x, bbox[2])
+        max_y = max(max_y, bbox[3])
 
         dwg.add(debug_path)
 
     # add a 5% padding
-    xPadding = (maxX - minX) * 0.05
-    yPadding = (maxY - minY) * 0.05
-    minX = minX - xPadding
-    maxX = maxX + xPadding
-    minY = minY - yPadding
-    maxY = maxY + yPadding
+    x_padding = (max_x - min_x) * 0.05
+    y_padding = (max_y - min_y) * 0.05
+    min_x = min_x - x_padding
+    max_x = max_x + x_padding
+    min_y = min_y - y_padding
+    max_y = max_y + y_padding
 
-    dwg['viewBox'] = "%d %d %d %d" % (minX, minY, maxX - minX, maxY - minY)
+    dwg['viewBox'] = "%d %d %d %d" % (min_x, min_y, max_x - min_x, max_y - min_y)
+
 
 def add_curvature_comb_to_debug_svg(paths, dwg, resolution):
     """
@@ -333,16 +337,18 @@ draw a curvature comb and add it to the debug svg
 
 
 ProfileSpec = namedtuple('ProfileSpec', 'channel_width channel_depth wall_width')
+
+
 def parse_profile_spec(spec):
     if spec == "noodle":
         return ProfileSpec(2, 2, 1)
     elif spec == "10mm":
         return ProfileSpec(10, 15, 2)
     else:
-        # is it 3, colon seperated, numbers
+        # is it 3, colon separated, numbers
         m = re.search("^([0-9.]+):([0-9.]+):([0-9.]+)$", spec)
-        if m == None:
-            raise argparse.ArgumentTypeError("Profile spec should be 3 numbers seperated by colons, units are not allowed")
+        if m is None:
+            raise argparse.ArgumentTypeError("Profile spec should be 3 numbers separated by colons, units are not allowed")
         return ProfileSpec(float(m.group(1)), float(m.group(2)), float(m.group(3)))
 
 
@@ -380,6 +386,8 @@ def join_angle(next_segment, curr_normal):
         curr_join = curr_normal + next_segment.normal(0)
     elif isinstance(next_segment, CubicBezier):
         curr_join = curr_normal + next_segment.normal(0)
+    else:
+        return None
 
     # make a unit vector
     return curr_join * (1 / abs(curr_join))
@@ -577,6 +585,7 @@ def create_stl_triangles(perp_points_list: list[PerpendicularPoints], profile):
     ])
 
     return output
+
 
 def create_stl_cover_triangles(perp_points_list, profile):
     """

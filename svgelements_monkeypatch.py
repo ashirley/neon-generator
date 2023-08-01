@@ -221,7 +221,7 @@ def segment_curvature(self, t, use_inf=False):
     ddx, ddy = ddz.real, ddz.imag
     old_np_seterr = numpy.seterr(invalid='raise')
     try:
-        #kappa = abs(dx*ddy - dy*ddx)/sqrt(dx*dx + dy*dy)**3
+        # kappa = abs(dx*ddy - dy*ddx)/sqrt(dx*dx + dy*dy)**3
         kappa = (dx*ddy - dy*ddx)/sqrt(dx*dx + dy*dy)**3
     except (ZeroDivisionError, FloatingPointError):
         # tangent vector is zero at t, use polytools to find limit
@@ -240,21 +240,27 @@ def segment_curvature(self, t, use_inf=False):
         numpy.seterr(**old_np_seterr)
     return kappa
 
+
 def line_curvature(self, t):
     """returns the curvature of the line, which is always zero."""
     return 0
 
+
 Line.curvature = line_curvature
+
 
 def cubic_curvature(self, t):
     """returns the curvature of the segment at t."""
     return segment_curvature(self, t)
 
+
 QuadraticBezier.curvature = cubic_curvature
 CubicBezier.curvature = cubic_curvature
+
 
 def arc_curvature(self, t):
     """returns the curvature of the segment at t."""
     return segment_curvature(self, t)
+
 
 Arc.curvature = arc_curvature
