@@ -1,4 +1,5 @@
 from svgelements_monkeypatch import *
+from maths import *
 import svgwrite
 import numpy
 from stl import Mesh
@@ -13,6 +14,7 @@ log_perp_points = False
 debug_perpendicular_style = {"stroke": "green", "stroke_width": "1px"}
 debug_original_style = {"stroke": "black", "stroke_width": "3px", "fill": "none"}
 debug_comb_style = {"stroke": "blue", "stroke_width": "1px"}
+intersection_detection_overlap = 10
 
 
 def main():
@@ -53,6 +55,9 @@ def main():
 
     perp_points_lists = generate_perpendicular_points(mm_paths, args.resolution, args.profile_size, args.covered_colour)
 
+    (perp_points_lists, error_indexes) = optimise_perp_points_list(perp_points_lists, args.profile_size)
+    # print(error_indexes)
+
     if args.output_file:
         stl_data = numpy.zeros(0, dtype=Mesh.dtype)
 
@@ -79,23 +84,31 @@ def main():
         dwg = svgwrite.Drawing(args.debug_output_file, profile='tiny')
 
         # copy across the original lines
-        copy_paths_to_debug_svg(scaled_paths, dwg)
+        copy_paths_to_debug_svg(mm_paths, dwg)
 
         # add the perpendicular lines
         prev_perp_points = None
         g = dwg.g(**debug_perpendicular_style)
-        for perp_points_list in perp_points_lists:
+        i = 0
+        for j, perp_points_list in enumerate(perp_points_lists):
             for perp_points in perp_points_list[1]:
-                g.add(dwg.line(start=(perp_points[0][0], perp_points[0][1]), end=(perp_points[3][0], perp_points[3][1])))
+
+                line = dwg.line(start=(perp_points.lo[0], perp_points.lo[1]), end=(perp_points.ro[0], perp_points.ro[1]))
+                if i in error_indexes:
+                    line["stroke"] = "red"
+                line.set_desc(title="%d: %d"%(j, i))
+                g.add(line)
+
                 if prev_perp_points:
-                    g.add(dwg.line(start=(prev_perp_points[0][0], prev_perp_points[0][1]), end=(perp_points[0][0], perp_points[0][1])))
-                    g.add(dwg.line(start=(prev_perp_points[3][0], prev_perp_points[3][1]), end=(perp_points[3][0], perp_points[3][1])))
+                    g.add(dwg.line(start=(prev_perp_points.lo[0], prev_perp_points.lo[1]), end=(perp_points.lo[0], perp_points.lo[1])))
+                    g.add(dwg.line(start=(prev_perp_points.ro[0], prev_perp_points.ro[1]), end=(perp_points.ro[0], perp_points.ro[1])))
+                i = i+1
                 prev_perp_points = perp_points
             prev_perp_points = None
         dwg.add(g)
 
         # add a curvature comb
-        add_curvature_comb_to_debug_svg(scaled_paths, dwg, args.resolution)
+        add_curvature_comb_to_debug_svg(mm_paths, dwg, args.resolution)
 
         dwg.save()
 
@@ -130,11 +143,10 @@ def parse_and_validate_stl(file, covered_colour):
     return paths
 
 
-PerpendicularPoints = namedtuple('PerpendicularPoints', 'lo li lid rid ri ro')
+PerpendicularPoints = namedtuple('PerpendicularPoints', 'lo li lid c rid ri ro')
 
 
-def generate_perpendicular_points(paths, resolution, profile, covered_colour) \
-        -> list[tuple[bool, list[PerpendicularPoints]]]:
+def generate_perpendicular_points(paths, resolution, profile, covered_colour) -> list[tuple[bool, list[PerpendicularPoints]]]:
     """
     Walk the path, generating a list of 2d coordinates on a line perpendicular to the line of the path.
     The points are for:
@@ -237,6 +249,130 @@ def generate_perpendicular_points(paths, resolution, profile, covered_colour) \
 
             prev_join = curr_join
     return perp_points_lists
+
+
+def optimise_perp_points_list(perp_points_lists, profile) -> tuple[list[tuple[bool, list[PerpendicularPoints]]], list[int]]:
+    """
+    Take a list of raw perp_points and optimise for not overlapping each other.
+    """
+
+    do_sort = True
+    do_deintersect = True
+
+    if do_sort:
+        # Before we do anything else, lets arrange paths, so they join up and flatten them.
+        # TODO: Do we need to support reversing a path?
+        ends = []
+        matches = {}
+        for perp_points_list in perp_points_lists:
+            ends.append(perp_points_list[1][-1].c)
+
+        for i, perp_points_list in enumerate(perp_points_lists):
+            start = perp_points_list[1][0].c
+            # look for an end which is close enough
+            closest_distance = None
+            for j, end in enumerate(ends):
+                new_distance = close(start, end)
+                if new_distance and (not closest_distance or new_distance < closest_distance):
+                    closest_distance = new_distance
+                    matches[j] = i  # the start should follow this end
+
+        # print(matches)
+        # we now have a set of ends which match starts, lets look for a place to begin
+        sorted_perp_points_lists = []
+        remaining_indexes = set(range(0, len(perp_points_lists)))
+        added_so_far = 0
+        while len(remaining_indexes) > 0:
+            unconnected_starts = remaining_indexes - set(matches.values())
+            if len(unconnected_starts) > 0:
+                begin = min(unconnected_starts)
+            else:
+                begin = next(iter(unconnected_starts))
+
+            while True:
+                # print(begin, added_so_far, added_so_far + len(perp_points_lists[begin][1]))
+                added_so_far += len(perp_points_lists[begin][1])
+                sorted_perp_points_lists.append(perp_points_lists[begin])
+                remaining_indexes.remove(begin)
+                if begin in matches:
+                    begin = matches[begin]
+                else:
+                    break
+    else:
+        sorted_perp_points_lists = perp_points_lists
+
+    flat_points_list = []
+    for perp_points_list in sorted_perp_points_lists:
+        flat_points_list += perp_points_list[1]
+
+    # First pass, identify sequences of perp lines which intersect with those nearby.
+    error_indexes = set()
+    intersect_graph = dict()  # a dict of line indexes which intersect with each other.
+
+    num_points = len(flat_points_list)
+    # print(num_points)
+    for j in range(0, num_points):
+        intersected = any_lines_intersect(
+            [flat_points_list[j].lo, flat_points_list[j].ro],
+            [[x.lo, x.ro] for x in flat_points_list[min(j + 1, num_points):min(j + intersection_detection_overlap, num_points)]]
+        )
+        if len(intersected) > 0:
+            # print(i, intersected)
+            error_indexes.add(j)
+            error_indexes |= set([j + x + 1 for x in intersected])
+
+            intersect_graph[j] = [j + x + 1 for x in intersected]
+
+    # Second pass, find disjoint sub graphs of intersecting lines
+    disjoint_intersecting_line_sets = find_disjoint_subgraphs(intersect_graph)
+    # print(disjoint_intersecting_line_sets)
+
+    # Third pass, for each subgraph, work from the middle out, moving the perp lines so the ends which cross are touching, not crossing
+
+    # TODO: this assumes the values in the set are continuous and all overlap the same way!
+    for disjoint_set in disjoint_intersecting_line_sets:
+        start = min(disjoint_set)
+        midpoint = start + len(disjoint_set) // 2
+        # which side of the midpoint do we fix to?
+        midpoint_perp_points = flat_points_list[midpoint]
+        midpoint_next_perp_points = flat_points_list[midpoint + 1]
+        fix_lo = intersection_position([midpoint_perp_points.lo, midpoint_perp_points.ro], [midpoint_next_perp_points.lo, midpoint_next_perp_points.ro]) < 0.5
+
+        # iterate backwards
+        for j in range(midpoint - 1, start - 1, -1):
+            # move one end of the line at index i on top of the midpoint line instead of intersecting
+            old_perp_points = flat_points_list[j]
+            if fix_lo:
+                new_perp_points = perpendicular_points_from_pair(old_perp_points.ro, midpoint_perp_points.lo, profile)
+            else:
+                new_perp_points = perpendicular_points_from_pair(midpoint_perp_points.ro, old_perp_points.lo, profile)
+            if do_deintersect:
+                remaining_index = j
+                lists_index = 0
+                while len(sorted_perp_points_lists[lists_index][1]) <= remaining_index:
+                    remaining_index -= len(sorted_perp_points_lists[lists_index][1])
+                    lists_index += 1
+                sorted_perp_points_lists[lists_index][1][remaining_index] = new_perp_points
+
+
+        # iterate forwards
+        for j in range(midpoint + 1, start + len(disjoint_set)):
+
+            # move one end of the line at index i on top of the midpoint line instead of intersecting
+            old_perp_points = flat_points_list[j]
+            if fix_lo:
+                new_perp_points = perpendicular_points_from_pair(old_perp_points.ro, midpoint_perp_points.lo, profile)
+            else:
+                new_perp_points = perpendicular_points_from_pair(midpoint_perp_points.ro, old_perp_points.lo, profile)
+            if do_deintersect:
+                remaining_index = j
+                lists_index = 0
+                while len(sorted_perp_points_lists[lists_index][1]) <= remaining_index:
+                    remaining_index -= len(sorted_perp_points_lists[lists_index][1])
+                    lists_index += 1
+                sorted_perp_points_lists[lists_index][1][remaining_index] = new_perp_points
+
+    return sorted_perp_points_lists, sorted(error_indexes)
 
 
 def copy_paths_to_debug_svg(paths, dwg):
@@ -365,7 +501,26 @@ def perpendicular_points(center, join, normal, profile) -> PerpendicularPoints:
     a = join * multiple * (profile.channel_width / 2)
     b = join * multiple * (profile.channel_width / 2 + profile.wall_width)
     delta = join * multiple * 0.2
-    return PerpendicularPoints(center + b, center + a, center + a - delta, center - a + delta, center - a, center - b)
+    return PerpendicularPoints(center + b, center + a, center + a - delta, center, center - a + delta, center - a, center - b)
+
+
+# generate points along the join line, centered on the given point with the given normal.
+def perpendicular_points_from_pair(m, n, profile) -> PerpendicularPoints:
+    # Under normal circumstances, the line is of length (profile.channel_width + 2 * profile.wall_width), find the multiple we're aiming for
+    typical_length = (profile.channel_width + 2 * profile.wall_width)
+    actual_length = abs(n - m)
+    multiple = actual_length / typical_length
+    # TODO: This feels like it is squishing the channel in an unhelpful way?
+    # print("multiple", multiple)
+
+    angle = (n - m)
+    angle = angle * (1 / abs(angle))  # make a unit vector
+    center = 0.5 * (n + m)
+
+    a = angle * multiple * (profile.channel_width / 2)
+    b = angle * multiple * (profile.channel_width / 2 + profile.wall_width)
+    delta = angle * multiple * 0.2
+    return PerpendicularPoints(center + b, center + a, center + a - delta, center, center - a + delta, center - a, center - b)
 
 
 def join_angle(next_segment, curr_normal):
